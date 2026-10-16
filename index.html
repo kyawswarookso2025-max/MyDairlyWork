@@ -1,0 +1,585 @@
+// Shift rules
+const SHIFT_START = "08:00";
+const SHIFT_END = "17:00";
+const BREAK_START = "12:00";
+const BREAK_END = "13:00";
+
+// Regular fixed = 8 hours (480 minutes)
+const REGULAR_MINUTES = 8 * 60;
+const OT_MULTIPLIER = 1.5;
+
+// Helpers
+function toMinutes(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function overlapMinutes(aStart, aEnd, bStart, bEnd) {
+  const start = Math.max(aStart, bStart);
+  const end = Math.min(aEnd, bEnd);
+  return Math.max(0, end - start);
+}
+
+/**
+ * Calculates worked, regular, OT (minutes) and OT pay (using per-employee hourlyRate)
+ * Assumption: same-day, inTime < outTime (user confirmed "No" crossing day)
+ */
+export function calculateOT({ inTime, outTime, hourlyRate }) {
+  const inM = toMinutes(inTime);
+  const outM = toMinutes(outTime);
+
+  const breakMins = overlapMinutes(
+    inM, outM,
+    toMinutes(BREAK_START), toMinutes(BREAK_END)
+  );
+
+  const workedMins = Math.max(0, (outM - inM) - breakMins);
+
+  const otMins = Math.max(0, workedMins - REGULAR_MINUTES);
+  const otHours = otMins / 60;
+
+  const regularMins = Math.min(workedMins, REGULAR_MINUTES);
+  const otPay = otHours * hourlyRate * OT_MULTIPLIER;
+
+  return {
+    workedMinutes: workedMins,
+    breakMinutes: breakMins,
+    regularMinutes: regularMins,
+    otMinutes: otMins,
+    otHours,
+    otPay
+  };
+}
+:root{
+  --glass-bg: rgba(255,255,255,0.10);
+  --glass-border: rgba(255,255,255,0.18);
+  --text: rgba(255,255,255,0.92);
+  --muted: rgba(255,255,255,0.70);
+  --shadow: rgba(0,0,0,0.35);
+}
+
+html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto; }
+
+.app-bg{
+  position: fixed; inset: 0;
+  background: #0b1220;
+  background-size: cover;
+  background-position: center;
+  z-index: -2;
+}
+.app-overlay{
+  position: fixed; inset: 0;
+  background: radial-gradient(60% 60% at 20% 10%, rgba(60,160,255,0.25), transparent 50%),
+              radial-gradient(60% 60% at 90% 20%, rgba(140,90,255,0.22), transparent 50%),
+              rgba(0,0,0,0.35);
+  z-index: -1;
+}
+
+.glass-card{
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 10px 30px var(--shadow);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-radius: 16px;
+}
+
+.btn{
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.10);
+  color: var(--text);
+  cursor: pointer;
+}
+.btn:hover{ background: rgba(255,255,255,0.14); }
+
+.field{ display:flex; flex-direction:column; gap:6px; margin: 10px 0; }
+label{ color: var(--muted); font-size: 12px; }
+input, select{
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(0,0,0,0.25);
+  color: var(--text);
+  outline: none;
+}
+.kpi{ font-size: 18px; font-weight: 700; color: var(--text); }
+.small{ color: var(--muted); font-size: 12px; }
+
+.page{
+  padding: 18px;
+  max-width: 980px;
+  margin: 0 auto;
+}
+.nav{
+  display:flex; gap:10px; flex-wrap:wrap; margin-bottom: 14px;
+}
+.nav a{
+  color: var(--text); text-decoration:none;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.08);
+}
+.nav a.active{ background: rgba(255,255,255,0.16); }
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Overtime Request</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <div class="app-bg" id="bg"></div>
+  <div class="app-overlay"></div>
+
+  <div class="page">
+    <div class="nav">
+      <a href="../index.html">Home</a>
+      <a href="./overtime-request.html" class="active">OT Request</a>
+      <a href="./ot-queue.html">OT Queue</a>
+      <a href="./team.html">Team</a>
+      <a href="./settings.html">Settings</a>
+    </div>
+
+    <div class="glass-card" style="padding:16px;">
+      <h2 style="margin:0 0 10px 0;">OT Request (Manual)</h2>
+
+      <div class="field">
+        <label>Employee</label>
+        <select id="employeeSelect"></select>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+        <div class="field">
+          <label>Date</label>
+          <input type="date" id="dateInput" />
+        </div>
+        <div class="field">
+          <label>Hourly Rate (auto from employee)</label>
+          <input type="text" id="rateInput" disabled />
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+        <div class="field">
+          <label>In Time</label>
+          <input type="time" id="inTime" value="17:00" />
+        </div>
+        <div class="field">
+          <label>Out Time</label>
+          <input type="time" id="outTime" value="19:00" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Break is fixed: 12:00 - 13:00</label>
+        <div class="small">OT submit is same-day only (inTime < outTime).</div>
+      </div>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn" id="calcBtn">Calculate</button>
+        <button class="btn" id="submitBtn">Submit (Pending)</button>
+      </div>
+
+      <hr style="border:0; border-top:1px solid rgba(255,255,255,0.15); margin:14px 0;"/>
+
+      <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
+        <div class="glass-card" style="padding:12px;">
+          <div class="small">OT Minutes</div>
+          <div class="kpi" id="otMins">-</div>
+        </div>
+        <div class="glass-card" style="padding:12px;">
+          <div class="small">OT Hours</div>
+          <div class="kpi" id="otHours">-</div>
+        </div>
+        <div class="glass-card" style="padding:12px;">
+          <div class="small">Estimated OT Pay</div>
+          <div class="kpi" id="otPay">-</div>
+        </div>
+      </div>
+
+      <div class="small" style="margin-top:10px;" id="statusText"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { calculateOT } from "../app.js";
+
+    // local demo storage
+    const EMP_KEY = "demo_employees";
+    const OT_KEY = "demo_ot_requests";
+    const BG_KEY = "theme_bg_url";
+
+    const bg = document.getElementById("bg");
+    const savedBg = localStorage.getItem(BG_KEY);
+    if (savedBg) bg.style.backgroundImage = `url(${savedBg})`;
+
+    function loadEmployees() {
+      const data = JSON.parse(localStorage.getItem(EMP_KEY) || "[]");
+      return data.length ? data : [
+        { id:"e1", name:"Employee A", hourlyRate: 5000, restDayOfWeek:"Sun" },
+        { id:"e2", name:"Employee B", hourlyRate: 6000, restDayOfWeek:"Sun" }
+      ];
+    }
+    function ensureEmployeesSaved() {
+      const employees = loadEmployees();
+      localStorage.setItem(EMP_KEY, JSON.stringify(employees));
+      return employees;
+    }
+
+    function loadOT() {
+      return JSON.parse(localStorage.getItem(OT_KEY) || "[]");
+    }
+    function saveOT(list) {
+      localStorage.setItem(OT_KEY, JSON.stringify(list));
+    }
+
+    const employees = ensureEmployeesSaved();
+
+    const sel = document.getElementById("employeeSelect");
+    const rateInput = document.getElementById("rateInput");
+
+    for (const e of employees) {
+      const opt = document.createElement("option");
+      opt.value = e.id; opt.textContent = e.name;
+      sel.appendChild(opt);
+    }
+
+    function getSelectedEmployee() {
+      const empId = sel.value;
+      return employees.find(x => x.id === empId);
+    }
+
+    sel.addEventListener("change", () => {
+      const emp = getSelectedEmployee();
+      rateInput.value = emp.hourlyRate;
+    });
+    sel.dispatchEvent(new Event("change"));
+
+    const calcBtn = document.getElementById("calcBtn");
+    const submitBtn = document.getElementById("submitBtn");
+
+    const otMins = document.getElementById("otMins");
+    const otHours = document.getElementById("otHours");
+    const otPay = document.getElementById("otPay");
+    const statusText = document.getElementById("statusText");
+
+    let lastCalc = null;
+
+    calcBtn.onclick = () => {
+      const emp = getSelectedEmployee();
+      const inTime = document.getElementById("inTime").value;
+      const outTime = document.getElementById("outTime").value;
+
+      const date = document.getElementById("dateInput").value || new Date().toISOString().slice(0,10);
+
+      lastCalc = calculateOT({ inTime, outTime, hourlyRate: emp.hourlyRate });
+      otMins.textContent = lastCalc.otMinutes.toFixed(0);
+      otHours.textContent = lastCalc.otHours.toFixed(2);
+      otPay.textContent = lastCalc.otPay.toFixed(0) + " Ks";
+      statusText.textContent = `Break deducted automatically (12:00–13:00). Date: ${date}`;
+    };
+
+    submitBtn.onclick = () => {
+      if (!lastCalc) calcBtn.click();
+      const emp = getSelectedEmployee();
+      const date = document.getElementById("dateInput").value || new Date().toISOString().slice(0,10);
+      const inTime = document.getElementById("inTime").value;
+      const outTime = document.getElementById("outTime").value;
+
+      const requests = loadOT();
+      const request = {
+        requestId: "r_" + Math.random().toString(16).slice(2),
+        employeeId: emp.id,
+        employeeName: emp.name,
+        date,
+        inTime,
+        outTime,
+        ...lastCalc,
+        status: "pending",
+        reviewedBy: null,
+        reviewedAt: null,
+        note: null,
+      };
+      requests.push(request);
+      saveOT(requests);
+
+      statusText.textContent = "Submitted. Status = pending (await admin/supervisor approve).";
+      lastCalc = null;
+    };
+
+    document.getElementById("dateInput").value = new Date().toISOString().slice(0,10);
+  </script>
+</body>
+</html>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OT Queue</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <div class="app-bg" id="bg"></div>
+  <div class="app-overlay"></div>
+
+  <div class="page">
+    <div class="nav">
+      <a href="../index.html">Home</a>
+      <a href="./overtime-request.html">OT Request</a>
+      <a href="./ot-queue.html" class="active">OT Queue</a>
+      <a href="./team.html">Team</a>
+      <a href="./settings.html">Settings</a>
+    </div>
+
+    <div class="glass-card" style="padding:16px;">
+      <h2 style="margin:0 0 10px 0;">OT Requests (Approve / Reject)</h2>
+
+      <div class="field">
+        <label>Role (demo)</label>
+        <select id="roleSelect">
+          <option value="admin">admin</option>
+          <option value="supervisor">supervisor</option>
+        </select>
+      </div>
+
+      <div id="list" style="display:flex; flex-direction:column; gap:10px;"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    const EMP_KEY = "demo_employees";
+    const OT_KEY = "demo_ot_requests";
+    const BG_KEY = "theme_bg_url";
+
+    const bg = document.getElementById("bg");
+    const savedBg = localStorage.getItem(BG_KEY);
+    if (savedBg) bg.style.backgroundImage = `url(${savedBg})`;
+
+    function loadOT() {
+      return JSON.parse(localStorage.getItem(OT_KEY) || "[]");
+    }
+    function saveOT(list) {
+      localStorage.setItem(OT_KEY, JSON.stringify(list));
+    }
+
+    const list = document.getElementById("list");
+    const roleSelect = document.getElementById("roleSelect");
+
+    function render() {
+      const requests = loadOT().sort((a,b)=> (a.date < b.date ? 1 : -1));
+      list.innerHTML = "";
+
+      const pending = requests.filter(r => r.status === "pending");
+      if (!pending.length) {
+        list.innerHTML = `<div class="small">No pending requests.</div>`;
+        return;
+      }
+
+      for (const r of pending) {
+        const card = document.createElement("div");
+        card.className = "glass-card";
+        card.style.padding = "12px";
+
+        card.innerHTML = `
+          <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+            <div>
+              <div style="font-weight:700;">${r.employeeName}</div>
+              <div class="small">${r.date} | ${r.inTime} - ${r.outTime}</div>
+              <div class="small">OT: ${r.otHours.toFixed(2)} hrs (${r.otMinutes} mins)</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="small">Estimated pay</div>
+              <div class="kpi">${r.otPay.toFixed(0)} Ks</div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:10px; margin-top:10px;">
+            <button class="btn" data-action="approve">Approve</button>
+            <button class="btn" data-action="reject">Reject</button>
+          </div>
+        `;
+
+        card.querySelector('[data-action="approve"]').onclick = () => {
+          const role = roleSelect.value;
+          const reqs = loadOT();
+          const idx = reqs.findIndex(x => x.requestId === r.requestId);
+          reqs[idx].status = "approved";
+          reqs[idx].reviewedBy = role;
+          reqs[idx].reviewedAt = new Date().toISOString();
+          saveOT(reqs);
+          render();
+        };
+
+        card.querySelector('[data-action="reject"]').onclick = () => {
+          const role = roleSelect.value;
+          const reason = prompt("Reject note (optional):", "") || "";
+          const reqs = loadOT();
+          const idx = reqs.findIndex(x => x.requestId === r.requestId);
+          reqs[idx].status = "rejected";
+          reqs[idx].reviewedBy = role;
+          reqs[idx].reviewedAt = new Date().toISOString();
+          reqs[idx].note = reason;
+          saveOT(reqs);
+          render();
+        };
+
+        list.appendChild(card);
+      }
+    }
+
+    roleSelect.addEventListener("change", render);
+    render();
+  </script>
+</body>
+</html>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Settings</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <div class="app-bg" id="bg"></div>
+  <div class="app-overlay"></div>
+
+  <div class="page">
+    <div class="nav">
+      <a href="../index.html">Home</a>
+      <a href="./overtime-request.html">OT Request</a>
+      <a href="./ot-queue.html">OT Queue</a>
+      <a href="./team.html">Team</a>
+      <a href="./settings.html" class="active">Settings</a>
+    </div>
+
+    <div class="glass-card" style="padding:16px;">
+      <h2 style="margin:0 0 10px 0;">Theme Background (Image)</h2>
+
+      <div class="field">
+        <label>Select background image</label>
+        <input type="file" id="fileInput" accept="image/*" />
+      </div>
+
+      <button class="btn" id="applyBtn">Apply</button>
+      <div class="small" style="margin-top:10px;">Saved in localStorage for demo. (Firebase Storage ထည့်မယ်ဆိုရင် cloud sync လုပ်လို့ရ)</div>
+    </div>
+  </div>
+
+  <script type="module">
+    const BG_KEY = "theme_bg_url";
+    const bg = document.getElementById("bg");
+    const saved = localStorage.getItem(BG_KEY);
+    if (saved) bg.style.backgroundImage = `url(${saved})`;
+
+    const input = document.getElementById("fileInput");
+    const applyBtn = document.getElementById("applyBtn");
+    let selectedUrl = null;
+
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      selectedUrl = URL.createObjectURL(file);
+    });
+
+    applyBtn.onclick = () => {
+      if (!selectedUrl) return alert("Choose an image first.");
+      localStorage.setItem(BG_KEY, selectedUrl);
+      bg.style.backgroundImage = `url(${selectedUrl})`;
+    };
+  </script>
+</body>
+</html>
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-app.js";
+import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-auth.js";
+import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js";
+import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-storage.js";
+
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_BUCKET",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID",
+};
+
+const app = initializeApp(firebaseConfig);
+
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const storage = getStorage(app);
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isEmployee() {
+      return isSignedIn() && getUserRole() == "employee";
+    }
+
+    function isAdminOrSupervisor() {
+      return isSignedIn() && (getUserRole() == "admin" || getUserRole() == "supervisor");
+    }
+
+    // users doc: role ကို read only လုပ်နိုင် (အပေါ်က UI တွင်လိုတဲ့အတွက်)
+    match /users/{uid} {
+      allow read: if isSignedIn() && uid == request.auth.uid;
+      allow create: if isSignedIn() && uid == request.auth.uid;
+      allow update: if isSignedIn() && uid == request.auth.uid; // လိုရင် ပိုတင်းကျပ်နိုင်
+      allow delete: if false;
+    }
+
+    // employees data: employee user ကမမြင်နိုင်အောင်/မြင်နိုင်အောင် ချိန်လို့ရ
+    match /employees/{employeeId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+
+    // OT requests
+    match /ot_requests/{requestId} {
+      allow read: if isSignedIn();
+
+      // employee submits OT (pending only)
+      allow create: if isEmployee() &&
+        request.resource.data.status == "pending";
+
+      // approve/reject: admin/supervisor only
+      allow update: if isAdminOrSupervisor() &&
+        request.resource.data.status in ["approved", "rejected"] &&
+        request.resource.data.reviewedBy == request.auth.uid;
+
+      // delete မလုပ်
+      allow delete: if false;
+    }
+
+    // Conversations & messages
+    match /conversations/{conversationId} {
+      allow read: if isSignedIn() &&
+        resource.data.participants.hasAny([request.auth.uid]);
+
+      allow write: if false; // conversation create ကို backend/admin script လုပ်မယ်ဆိုကောင်း
+      match /messages/{messageId} {
+        allow read: if isSignedIn() &&
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants.hasAny([request.auth.uid]);
+
+        allow create: if isSignedIn() &&
+          request.resource.data.senderUid == request.auth.uid;
+
+        allow update, delete: if false;
+      }
+    }
+  }
+}
